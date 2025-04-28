@@ -1,21 +1,15 @@
 'use client';
 
 import { useTVShowDetails } from "@/hooks/useTMDB";
-import { getTVShowEmbedUrl } from "@/api/vidsrc";
+import { getEpisodeEmbedUrl } from "@/api/vidsrc";
 import { getPosterUrl, getBackdropUrl } from "@/api/tmdb";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 export default function TVShowPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const { data: show, isLoading } = useTVShowDetails(parseInt(id));
-  const [embedUrl, setEmbedUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (show) {
-      const url = getTVShowEmbedUrl(show.id.toString());
-      setEmbedUrl(url);
-    }
-  }, [show]);
+  const [selectedSeason, setSelectedSeason] = useState(1);
 
   if (isLoading) {
     return (
@@ -80,15 +74,54 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
 
           <p className="text-lg mb-8">{show.overview}</p>
 
-          {embedUrl && (
-            <div className="aspect-video rounded-lg overflow-hidden">
-              <iframe
-                src={embedUrl}
-                className="w-full h-full"
-                allowFullScreen
-              ></iframe>
+          <div className="mb-8">
+            <h2 className="text-2xl font-semibold mb-4">Watch Episodes</h2>
+            <div className="flex flex-wrap gap-3 mb-4">
+              {Array.from({ length: show.number_of_seasons || 1 }).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setSelectedSeason(idx + 1)}
+                  className={`px-4 py-2 rounded-md ${
+                    selectedSeason === idx + 1
+                      ? "bg-primary text-white"
+                      : "bg-gray-800 hover:bg-gray-700"
+                  }`}
+                >
+                  Season {idx + 1}
+                </button>
+              ))}
             </div>
-          )}
+            
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {Array.from({ length: selectedSeason === 1 ? (show.number_of_episodes || 10) : 10 }).map((_, idx) => (
+                <Link
+                  key={idx}
+                  href={`/tv/${id}/season/${selectedSeason}/episode/${idx + 1}`}
+                  className="px-4 py-3 bg-gray-800 rounded-md hover:bg-gray-700 text-center transition-colors"
+                >
+                  Episode {idx + 1}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-gray-800 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold mb-2">Show Info</h3>
+            <div className="space-y-2">
+              <div className="flex">
+                <span className="text-gray-400 w-32">First aired:</span>
+                <span>{new Date(show.first_air_date).toLocaleDateString()}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-400 w-32">Seasons:</span>
+                <span>{show.number_of_seasons}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-400 w-32">Episodes:</span>
+                <span>{show.number_of_episodes}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
