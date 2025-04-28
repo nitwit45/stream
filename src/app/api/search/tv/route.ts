@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('query');
+    const page = searchParams.get('page') ? parseInt(searchParams.get('page') || '1', 10) : 1;
     
     if (!query) {
       return NextResponse.json(
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
       );
     }
     
-    const results = await searchContent(query, 'tvshow');
+    const results = await searchContent('tvshow', query, page);
     return NextResponse.json(results);
   } catch (error) {
     console.error('Error searching TV shows:', error);

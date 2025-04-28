@@ -372,4 +372,123 @@ export async function getContentByCategory(type: 'movie' | 'tvshow', category: s
     console.error(`Error fetching ${type}s by category ${category}:`, error);
     throw error;
   }
+}
+
+export async function cleanupOldCache() {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  try {
+    if (contentCollection) {
+      const result = await contentCollection.deleteMany({
+        lastChecked: { $lt: thirtyDaysAgo }
+      });
+      console.log(`Cleaned up ${result.deletedCount} old cache entries`);
+      return { success: true, deletedCount: result.deletedCount };
+    }
+  } catch (error) {
+    console.error('Error cleaning up old cache:', error);
+    return { success: false, error };
+  }
+  
+  return { success: false, error: 'Collection not available' };
+}
+
+export async function getContentById(type: 'movie' | 'tvshow', id: number) {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  try {
+    if (contentCollection) {
+      const content = await contentCollection.findOne({ 
+        tmdbId: id,
+        type
+      });
+      
+      if (content) {
+        return { 
+          success: true, 
+          content: content.data, 
+          available: content.available 
+        };
+      }
+      
+      // If not found in cache, fetch directly
+      const apiEndpoint = type === 'movie' 
+        ? `https://api.themoviedb.org/3/movie/${id}?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}`
+        : `https://api.themoviedb.org/3/tv/${id}?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}`;
+      
+      const response = await fetch(apiEndpoint);
+      const data = await response.json();
+      
+      // Check availability
+      const available = await checkAndCacheAvailability(data, type);
+      
+      return { success: true, content: data, available };
+    }
+  } catch (error) {
+    console.error(`Error getting ${type} by ID ${id}:`, error);
+    return { success: false, error };
+  }
+  
+  return { success: false, error: 'Collection not available' };
+}
+
+export async function searchContent(type: 'movie' | 'tvshow', query: string, page: number = 1) {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  try {
+    // First search in TMDB
+    const apiEndpoint = type === 'movie'
+      ? `https://api.themoviedb.org/3/search/movie?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=${page}`
+      : `https://api.themoviedb.org/3/search/tv?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=${page}`;
+    
+    const response = await fetch(apiEndpoint);
+    const data = await response.json();
+    
+    const results = data.results || [];
+    const totalPages = data.total_pages || 0;
+    const totalResults = data.total_results || 0;
+    
+    // Filter out items that aren't available (by checking our cache)
+    if (contentCollection && results.length > 0) {
+      const tmdbIds = results.map((item: any) => item.id);
+      
+      const cachedResults = await contentCollection.find({
+        tmdbId: { $in: tmdbIds },
+        type,
+        available: true
+      }).toArray();
+      
+      const cachedIds = new Set(cachedResults.map(item => item.tmdbId));
+      const availableResults = results.filter((item: any) => cachedIds.has(item.id));
+      
+      return {
+        success: true,
+        content: availableResults,
+        totalPages,
+        totalResults: availableResults.length,
+        filteredFromOriginal: results.length - availableResults.length
+      };
+    }
+    
+    // If no cached results, just return everything (availability will be checked later)
+    return {
+      success: true,
+      content: results,
+      totalPages,
+      totalResults,
+      filteredFromOriginal: 0
+    };
+  } catch (error) {
+    console.error(`Error searching ${type} with query "${query}":`, error);
+    return { success: false, error, content: [], totalPages: 0, totalResults: 0 };
+  }
 } 

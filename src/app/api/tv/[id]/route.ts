@@ -17,12 +17,15 @@ export async function GET(
       );
     }
 
-    const tvShow = await getContentById(tvId, 'tvshow');
-    if (!tvShow) {
-      return NextResponse.json(null);
+    const result = await getContentById('tvshow', tvId);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: 'TV show not found' },
+        { status: 404 }
+      );
     }
     
-    return NextResponse.json(tvShow);
+    return NextResponse.json(result);
   } catch (error) {
     console.error('Error fetching TV show details:', error);
     return NextResponse.json(

@@ -18,8 +18,8 @@ export async function GET() {
 
     // Check availability for all items
     const availabilityChecks = [
-      ...movies.results.map(movie => checkAndCacheAvailability(movie.id, 'movie')),
-      ...tvShows.results.map(tvShow => checkAndCacheAvailability(tvShow.id, 'tvshow'))
+      ...movies.content.map(movie => checkAndCacheAvailability(movie, 'movie')),
+      ...tvShows.content.map(tvShow => checkAndCacheAvailability(tvShow, 'tvshow'))
     ];
 
     await Promise.all(availabilityChecks);

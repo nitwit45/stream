@@ -17,12 +17,15 @@ export async function GET(
       );
     }
 
-    const movie = await getContentById(movieId, 'movie');
-    if (!movie) {
-      return NextResponse.json(null);
+    const result = await getContentById('movie', movieId);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: 'Movie not found' },
+        { status: 404 }
+      );
     }
     
-    return NextResponse.json(movie);
+    return NextResponse.json(result);
   } catch (error) {
     console.error('Error fetching movie details:', error);
     return NextResponse.json(

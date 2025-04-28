@@ -9,8 +9,10 @@ const nextConfig = {
       },
     ],
   },
-  // Add this section to prevent client-side usage of MongoDB
-  serverExternalPackages: ['mongodb'],
+  // Using experimental options for server packages
+  experimental: {
+    serverComponentsExternalPackages: ['mongodb'],
+  },
 };
 
 module.exports = nextConfig; 
