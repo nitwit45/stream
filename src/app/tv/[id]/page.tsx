@@ -10,6 +10,16 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const { data: show, isLoading } = useTVShowDetails(parseInt(id));
   const [selectedSeason, setSelectedSeason] = useState(1);
+  const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
+
+  // For better UX, we'll determine episodes per season
+  const getEpisodesForSeason = (seasonNumber: number) => {
+    if (seasonNumber === 1) {
+      return show?.number_of_episodes || 10;
+    }
+    // If we don't have exact data for other seasons, assume 10 episodes
+    return 10;
+  };
 
   if (isLoading) {
     return (
@@ -56,6 +66,24 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
               className="object-cover w-full h-full"
             />
           </div>
+          
+          <div className="mt-6 bg-gray-800 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold mb-2">Show Info</h3>
+            <div className="space-y-2">
+              <div className="flex">
+                <span className="text-gray-400 w-32">First aired:</span>
+                <span>{new Date(show.first_air_date).toLocaleDateString()}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-400 w-32">Seasons:</span>
+                <span>{show.number_of_seasons}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-400 w-32">Episodes:</span>
+                <span>{show.number_of_episodes}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="md:col-span-2">
@@ -74,51 +102,73 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
 
           <p className="text-lg mb-8">{show.overview}</p>
 
-          <div className="mb-8">
-            <h2 className="text-2xl font-semibold mb-4">Watch Episodes</h2>
-            <div className="flex flex-wrap gap-3 mb-4">
-              {Array.from({ length: show.number_of_seasons || 1 }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedSeason(idx + 1)}
-                  className={`px-4 py-2 rounded-md ${
-                    selectedSeason === idx + 1
-                      ? "bg-primary text-white"
-                      : "bg-gray-800 hover:bg-gray-700"
-                  }`}
-                >
-                  Season {idx + 1}
-                </button>
-              ))}
+          <div className="bg-gray-900 rounded-xl overflow-hidden mb-8">
+            <div className="p-6 border-b border-gray-800">
+              <h2 className="text-2xl font-bold">Watch Episodes</h2>
+              <p className="text-gray-400 mt-1">Select a season and episode to start watching</p>
             </div>
             
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {Array.from({ length: selectedSeason === 1 ? (show.number_of_episodes || 10) : 10 }).map((_, idx) => (
-                <Link
-                  key={idx}
-                  href={`/tv/${id}/season/${selectedSeason}/episode/${idx + 1}`}
-                  className="px-4 py-3 bg-gray-800 rounded-md hover:bg-gray-700 text-center transition-colors"
-                >
-                  Episode {idx + 1}
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-gray-800 p-4 rounded-lg">
-            <h3 className="text-lg font-semibold mb-2">Show Info</h3>
-            <div className="space-y-2">
-              <div className="flex">
-                <span className="text-gray-400 w-32">First aired:</span>
-                <span>{new Date(show.first_air_date).toLocaleDateString()}</span>
+            <div className="p-6">
+              {/* Season selector - dropdown style for better UX */}
+              <div className="relative mb-6">
+                <label className="block text-sm font-medium text-gray-400 mb-2">Season</label>
+                <div className="relative">
+                  <button 
+                    onClick={() => setIsSeasonDropdownOpen(!isSeasonDropdownOpen)}
+                    className="w-full bg-gray-800 px-4 py-3 rounded-lg flex justify-between items-center hover:bg-gray-700 transition-colors"
+                  >
+                    <span>Season {selectedSeason}</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transition-transform ${isSeasonDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {isSeasonDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 rounded-lg shadow-xl z-20 max-h-60 overflow-y-auto">
+                      {Array.from({ length: show.number_of_seasons || 1 }).map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setSelectedSeason(idx + 1);
+                            setIsSeasonDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 hover:bg-gray-700 ${
+                            selectedSeason === idx + 1 ? 'bg-primary text-white' : ''
+                          }`}
+                        >
+                          Season {idx + 1}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex">
-                <span className="text-gray-400 w-32">Seasons:</span>
-                <span>{show.number_of_seasons}</span>
-              </div>
-              <div className="flex">
-                <span className="text-gray-400 w-32">Episodes:</span>
-                <span>{show.number_of_episodes}</span>
+              
+              {/* Episode grid with visual enhancements */}
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-4">Episodes</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {Array.from({ length: getEpisodesForSeason(selectedSeason) }).map((_, idx) => (
+                    <Link
+                      key={idx}
+                      href={`/tv/${id}/season/${selectedSeason}/episode/${idx + 1}`}
+                      className="group"
+                    >
+                      <div className="bg-gray-800 rounded-lg overflow-hidden hover:bg-gray-700 transition-all group-hover:ring-2 group-hover:ring-primary">
+                        <div className="aspect-video bg-gray-700 flex items-center justify-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-500 group-hover:text-primary transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <div className="p-3">
+                          <div className="font-medium">Episode {idx + 1}</div>
+                          <div className="text-xs text-gray-400 mt-1">Season {selectedSeason}</div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
