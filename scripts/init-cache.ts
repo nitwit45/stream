@@ -2,6 +2,7 @@ import { getPopularMovies, getPopularTVShows } from '../src/api/tmdb';
 import { checkAndCacheAvailability, connectToDatabase } from '../src/api/mongodb';
 import dotenv from 'dotenv';
 import path from 'path';
+import { Movie, TVShow } from '../src/types/tmdb';
 
 // Load environment variables from .env.local
 const envPath = path.resolve(process.cwd(), '.env.local');
@@ -23,6 +24,23 @@ if (!process.env.NEXT_PUBLIC_TMDB_API_KEY) {
   console.error('NEXT_PUBLIC_TMDB_API_KEY environment variable is not set');
   process.exit(1);
 }
+
+// Adapter functions to match the expected interface
+const getPopularMoviesAdapter = async (page: number): Promise<{ results: Movie[]; total_pages: number }> => {
+  const { content, totalPages } = await getPopularMovies(page);
+  return {
+    results: content,
+    total_pages: totalPages
+  };
+};
+
+const getPopularTVShowsAdapter = async (page: number): Promise<{ results: TVShow[]; total_pages: number }> => {
+  const { content, totalPages } = await getPopularTVShows(page);
+  return {
+    results: content,
+    total_pages: totalPages
+  };
+};
 
 // Function to fetch all pages of content
 async function fetchAllPages<T>(
@@ -57,8 +75,8 @@ async function initCache() {
 
     // Fetch all pages of popular movies and TV shows
     const [allMovies, allTVShows] = await Promise.all([
-      fetchAllPages(getPopularMovies, 'movies'),
-      fetchAllPages(getPopularTVShows, 'TV shows')
+      fetchAllPages(getPopularMoviesAdapter, 'movies'),
+      fetchAllPages(getPopularTVShowsAdapter, 'TV shows')
     ]);
 
     console.log(`Found ${allMovies.length} movies and ${allTVShows.length} TV shows`);
