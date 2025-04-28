@@ -4,10 +4,9 @@ import { useMovieDetails } from "@/hooks/useTMDB";
 import { getMovieEmbedUrl } from "@/api/vidsrc";
 import { getPosterUrl, getBackdropUrl } from "@/api/tmdb";
 import { useEffect, useState } from "react";
-import { use } from "react";
 
-export default function MoviePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function MoviePage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const { data: movie, isLoading } = useMovieDetails(parseInt(id));
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);

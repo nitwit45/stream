@@ -4,10 +4,9 @@ import { useTVShowDetails } from "@/hooks/useTMDB";
 import { getTVShowEmbedUrl } from "@/api/vidsrc";
 import { getPosterUrl, getBackdropUrl } from "@/api/tmdb";
 import { useEffect, useState } from "react";
-import { use } from "react";
 
-export default function TVShowPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function TVShowPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const { data: show, isLoading } = useTVShowDetails(parseInt(id));
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
 
