@@ -4,14 +4,7 @@ import { usePopularTVShows } from "@/hooks/useTMDB";
 import { Card } from "@/components/ui/Card";
 import { getPosterUrl } from "@/api/tmdb";
 import { useState } from "react";
-
-interface TVShow {
-  id: number;
-  name: string;
-  poster_path: string;
-  vote_average: number;
-  first_air_date: string;
-}
+import { TVShow } from "@/types/tmdb";
 
 export default function TVPage() {
   const [page, setPage] = useState(1);
