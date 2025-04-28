@@ -4,14 +4,7 @@ import { usePopularMovies } from "@/hooks/useTMDB";
 import { Card } from "@/components/ui/Card";
 import { getPosterUrl } from "@/api/tmdb";
 import { useState } from "react";
-
-interface Movie {
-  id: number;
-  title: string;
-  poster_path: string;
-  vote_average: number;
-  release_date: string;
-}
+import { Movie } from "@/types/tmdb";
 
 export default function MoviesPage() {
   const [page, setPage] = useState(1);
