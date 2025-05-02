@@ -10,7 +10,8 @@
     "init-cache": "ts-node --project tsconfig.scripts.json scripts/init-cache.ts",
     "init-db": "ts-node --project tsconfig.scripts.json scripts/init-db.ts",
     "check-db": "ts-node --project tsconfig.scripts.json scripts/check-db.ts",
-    "fetch-all": "ts-node --project tsconfig.scripts.json scripts/fetch-all.ts"
+    "fetch-all": "ts-node --project tsconfig.scripts.json scripts/fetch-all.ts",
+    "update-tv": "ts-node --project tsconfig.scripts.json scripts/update-tv-episodes.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.4",

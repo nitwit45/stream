@@ -8,17 +8,28 @@ import Link from "next/link";
 
 export default function TVShowPage({ params }: { params: { id: string } }) {
   const { id } = params;
-  const { data: show, isLoading } = useTVShowDetails(parseInt(id));
+  const { data: show, isLoading, error } = useTVShowDetails(parseInt(id));
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
 
-  // For better UX, we'll determine episodes per season
+  // For better UX, accurately determine episodes per season
   const getEpisodesForSeason = (seasonNumber: number) => {
-    if (seasonNumber === 1) {
-      return show?.number_of_episodes || 10;
+    if (!show || !show.seasons) {
+      return 10; // Default if no data available
     }
-    // If we don't have exact data for other seasons, assume 10 episodes
-    return 10;
+    
+    const season = show.seasons.find(s => s.season_number === seasonNumber);
+    if (season && season.episode_count) {
+      return season.episode_count;
+    }
+    
+    // If we don't have exact data for this season, use a reasonable default
+    if (show.number_of_episodes && show.number_of_seasons) {
+      // Approximate based on average episodes per season
+      return Math.ceil(show.number_of_episodes / show.number_of_seasons);
+    }
+    
+    return 10; // Safe default
   };
 
   if (isLoading) {
@@ -37,13 +48,19 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
     );
   }
 
-  if (!show) {
+  if (error || !show) {
     return (
       <div className="container py-8">
         <h1 className="text-2xl font-bold">TV Show not found</h1>
+        <p className="text-gray-400 mt-2">
+          {error instanceof Error ? error.message : "Unable to load TV show details"}
+        </p>
       </div>
     );
   }
+
+  // Filter out special seasons (season 0)
+  const regularSeasons = show.seasons ? show.seasons.filter(season => season.season_number > 0) : [];
 
   return (
     <div className="container py-8">
@@ -76,11 +93,11 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
               </div>
               <div className="flex">
                 <span className="text-gray-400 w-32">Seasons:</span>
-                <span>{show.number_of_seasons}</span>
+                <span>{regularSeasons.length || show.number_of_seasons || 0}</span>
               </div>
               <div className="flex">
                 <span className="text-gray-400 w-32">Episodes:</span>
-                <span>{show.number_of_episodes}</span>
+                <span>{show.number_of_episodes || "Unknown"}</span>
               </div>
             </div>
           </div>
@@ -125,20 +142,36 @@ export default function TVShowPage({ params }: { params: { id: string } }) {
                   
                   {isSeasonDropdownOpen && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 rounded-lg shadow-xl z-20 max-h-60 overflow-y-auto">
-                      {Array.from({ length: show.number_of_seasons || 1 }).map((_, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => {
-                            setSelectedSeason(idx + 1);
-                            setIsSeasonDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-4 py-2 hover:bg-gray-700 ${
-                            selectedSeason === idx + 1 ? 'bg-primary text-white' : ''
-                          }`}
-                        >
-                          Season {idx + 1}
-                        </button>
-                      ))}
+                      {regularSeasons.length > 0 ? 
+                        regularSeasons.map((season) => (
+                          <button
+                            key={season.season_number}
+                            onClick={() => {
+                              setSelectedSeason(season.season_number);
+                              setIsSeasonDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 hover:bg-gray-700 ${
+                              selectedSeason === season.season_number ? 'bg-primary text-white' : ''
+                            }`}
+                          >
+                            Season {season.season_number} {season.name !== `Season ${season.season_number}` ? `- ${season.name}` : ''}
+                          </button>
+                        )) : 
+                        Array.from({ length: show.number_of_seasons || 1 }).map((_, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setSelectedSeason(idx + 1);
+                              setIsSeasonDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 hover:bg-gray-700 ${
+                              selectedSeason === idx + 1 ? 'bg-primary text-white' : ''
+                            }`}
+                          >
+                            Season {idx + 1}
+                          </button>
+                        ))
+                      }
                     </div>
                   )}
                 </div>

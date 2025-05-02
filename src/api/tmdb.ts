@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Movie, TVShow } from "@/types/tmdb";
+import { Movie, TVShow, Season, Episode, EpisodeGroup } from "@/types/tmdb";
 
 // TMDB API Types
 export interface TMDBMovie {
@@ -97,7 +97,39 @@ export async function getMovieDetails(id: number): Promise<Movie> {
 }
 
 export async function getTVShowDetails(id: number): Promise<TVShow> {
-  const response = await fetch(`${TMDB_BASE_URL}/tv/${id}?api_key=${getApiKey()}`);
+  // Fetch the base TV show details
+  const response = await fetch(`${TMDB_BASE_URL}/tv/${id}?api_key=${getApiKey()}&append_to_response=seasons`);
+  const show = await response.json();
+  
+  try {
+    // Fetch episode groups in a separate call
+    const episodeGroupsResponse = await fetch(`${TMDB_BASE_URL}/tv/${id}/episode_groups?api_key=${getApiKey()}`);
+    const episodeGroupsData = await episodeGroupsResponse.json();
+    
+    // Add episode groups to the show data
+    if (episodeGroupsData && episodeGroupsData.results) {
+      show.episode_groups = episodeGroupsData.results;
+    }
+  } catch (error) {
+    console.error(`Error fetching episode groups for TV show ${id}:`, error);
+    // Continue with the base data if episode groups fail
+  }
+  
+  return show;
+}
+
+export async function getTVSeasonDetails(tvId: number, seasonNumber: number): Promise<Season> {
+  const response = await fetch(`${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}?api_key=${getApiKey()}`);
+  return response.json();
+}
+
+export async function getTVEpisodeDetails(tvId: number, seasonNumber: number, episodeNumber: number): Promise<Episode> {
+  const response = await fetch(`${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}/episode/${episodeNumber}?api_key=${getApiKey()}`);
+  return response.json();
+}
+
+export async function getTVEpisodeGroups(tvId: number): Promise<{ results: EpisodeGroup[] }> {
+  const response = await fetch(`${TMDB_BASE_URL}/tv/${tvId}/episode_groups?api_key=${getApiKey()}`);
   return response.json();
 }
 

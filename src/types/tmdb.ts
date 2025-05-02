@@ -15,6 +15,37 @@ export interface Movie {
   }[];
 }
 
+export interface Season {
+  id: number;
+  name: string;
+  overview: string;
+  poster_path: string | null;
+  season_number: number;
+  episode_count: number;
+  air_date: string;
+}
+
+export interface Episode {
+  id: number;
+  name: string;
+  overview: string;
+  still_path: string | null;
+  episode_number: number;
+  season_number: number;
+  air_date: string;
+  runtime: number;
+  vote_average: number;
+}
+
+export interface EpisodeGroup {
+  id: string;
+  name: string;
+  description: string;
+  episode_count: number;
+  group_count: number;
+  type: number;
+}
+
 export interface TVShow {
   id: number;
   name: string;
@@ -32,4 +63,6 @@ export interface TVShow {
   }[];
   number_of_seasons: number;
   number_of_episodes: number;
+  seasons?: Season[];
+  episode_groups?: EpisodeGroup[];
 } 

@@ -1,5 +1,5 @@
 import { MongoClient, Collection, IndexSpecification, Document, Db } from 'mongodb';
-import { Movie, TVShow } from '@/types/tmdb';
+import { Movie, TVShow, Season, Episode } from '@/types/tmdb';
 import dotenv from 'dotenv';
 import path from 'path';
 
@@ -19,6 +19,15 @@ interface ContentDocument extends Document {
   tmdbId: number;
   type: 'movie' | 'tvshow';
   data: Movie | TVShow;
+  seasons?: { 
+    seasonNumber: number;
+    episodeCount: number;
+    episodes?: { 
+      episodeNumber: number;
+      available: boolean;
+      lastChecked: Date;
+    }[];
+  }[];
   available: boolean;
   lastChecked: Date;
 }
@@ -41,7 +50,9 @@ export async function connectToDatabase() {
       { type: 1, available: 1 } as IndexSpecification,
       { 'data.title': 1 } as IndexSpecification,
       { 'data.name': 1 } as IndexSpecification,
-      { lastChecked: 1 } as IndexSpecification
+      { lastChecked: 1 } as IndexSpecification,
+      { 'seasons.seasonNumber': 1 } as IndexSpecification,
+      { 'seasons.episodes.episodeNumber': 1 } as IndexSpecification
     ];
     
     for (const index of indexes) {
@@ -58,6 +69,206 @@ export async function connectToDatabase() {
   } catch (error) {
     console.error('Error connecting to MongoDB:', error);
     throw error;
+  }
+}
+
+// Add or update season and episode availability
+export async function updateTVShowSeasonData(tvId: number, seasons: Season[]) {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  const now = new Date();
+  
+  try {
+    // Store season data with episode counts
+    const seasonsData = seasons.map(season => ({
+      seasonNumber: season.season_number,
+      episodeCount: season.episode_count,
+      available: true,
+      lastChecked: now
+    }));
+    
+    if (contentCollection) {
+      await contentCollection.updateOne(
+        { tmdbId: tvId },
+        { $set: { seasons: seasonsData } },
+        { upsert: true }
+      );
+    }
+  } catch (error) {
+    console.error(`Error updating TV show season data for ${tvId}:`, error);
+  }
+}
+
+// Add this function below updateTVShowSeasonData
+export async function bulkUpdateTVShowSeasonData(data: Array<{tvId: number, seasons: Season[]}>) {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  const now = new Date();
+  
+  try {
+    if (!contentCollection) {
+      throw new Error('Content collection not available');
+    }
+    
+    // Prepare bulk operations
+    const bulkOps = data.map(item => {
+      const seasonsData = item.seasons.map(season => ({
+        seasonNumber: season.season_number,
+        episodeCount: season.episode_count,
+        available: true,
+        lastChecked: now
+      }));
+      
+      return {
+        updateOne: {
+          filter: { tmdbId: item.tvId },
+          update: { $set: { 
+            seasons: seasonsData,
+            lastChecked: now
+          }},
+          upsert: true
+        }
+      };
+    });
+    
+    if (bulkOps.length > 0) {
+      // Execute bulk operation
+      await contentCollection.bulkWrite(bulkOps, { ordered: false });
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`Error bulk updating TV show season data:`, error);
+    return false;
+  }
+}
+
+// Check and update episode availability
+export async function checkAndUpdateEpisodeAvailability(
+  tvId: number, 
+  seasonNumber: number, 
+  episodeNumber: number
+) {
+  if (!contentCollection) {
+    await connectToDatabase();
+  }
+
+  const now = new Date();
+  
+  try {
+    // Check if we already have this episode cached
+    const tvShow = contentCollection ? 
+      await contentCollection.findOne({ 
+        tmdbId: tvId,
+        'seasons.seasonNumber': seasonNumber
+      }) : null;
+    
+    let episodeAvailability = null;
+    
+    if (tvShow) {
+      const season = tvShow.seasons?.find(s => s.seasonNumber === seasonNumber);
+      if (season) {
+        const episode = season.episodes?.find(e => e.episodeNumber === episodeNumber);
+        if (episode && (now.getTime() - episode.lastChecked.getTime() < 24 * 60 * 60 * 1000)) {
+          return episode.available;
+        }
+      }
+    }
+    
+    // Check with VidSrc if episode is available
+    const episodeUrl = `https://vidsrc.xyz/embed/tv/${tvId}/${seasonNumber}-${episodeNumber}`;
+    const response = await fetch(episodeUrl);
+    const isAvailable = response.ok;
+    
+    // Update or insert the episode availability
+    if (contentCollection) {
+      // First ensure we have the TV show and season
+      await contentCollection.updateOne(
+        { tmdbId: tvId },
+        { 
+          $setOnInsert: { 
+            type: 'tvshow',
+            available: true,
+            lastChecked: now 
+          } 
+        },
+        { upsert: true }
+      );
+      
+      // Check if the season exists
+      const seasonExists = await contentCollection.findOne({
+        tmdbId: tvId,
+        'seasons.seasonNumber': seasonNumber
+      });
+      
+      if (!seasonExists) {
+        // Add the season if it doesn't exist
+        await contentCollection.updateOne(
+          { tmdbId: tvId },
+          { 
+            $push: { 
+              seasons: {
+                seasonNumber,
+                episodeCount: 0,  // Will be updated later
+                episodes: [],
+                lastChecked: now
+              } as any
+            }
+          }
+        );
+      }
+      
+      // Update or add the episode
+      await contentCollection.updateOne(
+        { 
+          tmdbId: tvId,
+          'seasons.seasonNumber': seasonNumber
+        },
+        {
+          $set: {
+            lastChecked: now,
+            'seasons.$.lastChecked': now
+          },
+          $addToSet: {
+            'seasons.$.episodes': {
+              episodeNumber,
+              available: isAvailable,
+              lastChecked: now
+            }
+          }
+        }
+      );
+      
+      // If the episode already exists, update it
+      await contentCollection.updateOne(
+        { 
+          tmdbId: tvId,
+          'seasons.seasonNumber': seasonNumber,
+          'seasons.episodes.episodeNumber': episodeNumber
+        },
+        {
+          $set: {
+            'seasons.$[season].episodes.$[episode].available': isAvailable,
+            'seasons.$[season].episodes.$[episode].lastChecked': now
+          }
+        },
+        {
+          arrayFilters: [
+            { 'season.seasonNumber': seasonNumber },
+            { 'episode.episodeNumber': episodeNumber }
+          ]
+        }
+      );
+    }
+    
+    return isAvailable;
+  } catch (error) {
+    console.error(`Error checking/updating episode availability for TV ${tvId} S${seasonNumber}E${episodeNumber}:`, error);
+    return false;
   }
 }
 
@@ -79,14 +290,22 @@ export async function checkAndCacheAvailability(content: Movie | TVShow, type: '
 
     // Check availability with Vidsrc
     const streamUrl = type === 'movie' 
-      ? `https://vidsrc.to/embed/movie/${tmdbId}`
-      : `https://vidsrc.to/embed/tv/${tmdbId}/1/1`;
+      ? `https://vidsrc.xyz/embed/movie/${tmdbId}`
+      : `https://vidsrc.xyz/embed/tv/${tmdbId}/1/1`;
     
     const response = await fetch(streamUrl);
     const isAvailable = response.ok;
 
     // Update or insert the content
     if (contentCollection) {
+      // For TV shows, try to store seasons and episodes info
+      if (type === 'tvshow') {
+        const tvShow = content as TVShow;
+        if (tvShow.seasons) {
+          await updateTVShowSeasonData(tmdbId, tvShow.seasons);
+        }
+      }
+      
       await contentCollection.updateOne(
         { tmdbId },
         {

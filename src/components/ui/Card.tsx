@@ -11,7 +11,11 @@ export interface CardProps {
 }
 
 export function Card({ id, title, type, posterUrl, rating, releaseDate }: CardProps) {
-  const href = `/${type === 'movie' ? 'movie' : 'tv'}/${id}`;
+  // For TV shows, redirect directly to season 1, episode 1
+  const href = type === 'movie' 
+    ? `/movie/${id}` 
+    : `/tv/${id}/season/1/episode/1`;
+    
   const year = releaseDate ? new Date(releaseDate).getFullYear() : null;
   
   return (

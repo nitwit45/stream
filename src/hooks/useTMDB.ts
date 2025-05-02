@@ -1,6 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import { Movie, TVShow } from '@/types/tmdb';
-import { getPopularMovies, getPopularTVShows, getMovieDetails, getTVShowDetails, searchMovies, searchTVShows } from "@/api/tmdb";
+import { Movie, TVShow, Season, Episode } from '@/types/tmdb';
+import { 
+  getPopularMovies, 
+  getPopularTVShows, 
+  getMovieDetails, 
+  getTVShowDetails, 
+  getTVSeasonDetails,
+  getTVEpisodeDetails,
+  searchMovies, 
+  searchTVShows
+} from "@/api/tmdb";
 
 async function fetchMovies(category: string = 'popular', page: number = 1) {
   const response = await fetch(`/api/movies?category=${category}&page=${page}`);
@@ -78,6 +87,22 @@ export function useTVShowDetails(id: number, options = {}) {
   return useQuery({
     queryKey: ["tvShowDetails", id],
     queryFn: () => getTVShowDetails(id),
+    ...options,
+  });
+}
+
+export function useTVSeasonDetails(tvId: number, seasonNumber: number, options = {}) {
+  return useQuery({
+    queryKey: ["tvSeasonDetails", tvId, seasonNumber],
+    queryFn: () => getTVSeasonDetails(tvId, seasonNumber),
+    ...options,
+  });
+}
+
+export function useTVEpisodeDetails(tvId: number, seasonNumber: number, episodeNumber: number, options = {}) {
+  return useQuery({
+    queryKey: ["tvEpisodeDetails", tvId, seasonNumber, episodeNumber],
+    queryFn: () => getTVEpisodeDetails(tvId, seasonNumber, episodeNumber),
     ...options,
   });
 }

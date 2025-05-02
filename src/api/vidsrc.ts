@@ -65,6 +65,12 @@ const buildEmbedUrl = (
   tmdbId: string,
   options?: { season?: number; episode?: number; subUrl?: string; dsLang?: string }
 ) => {
+  // For TV episodes, use the format recommended in the documentation: vidsrc.xyz/embed/tv/tmdbId/season-episode
+  if (type === 'tv' && options?.season && options?.episode) {
+    return `${API_BASE_URL}/embed/tv/${tmdbId}/${options.season}-${options.episode}`;
+  }
+  
+  // For other cases, use the query parameter approach
   const params = new URLSearchParams();
   params.append('tmdb', tmdbId);
   
@@ -88,7 +94,10 @@ export const getEpisodeEmbedUrl = (
   season: number,
   episode: number,
   options?: { subUrl?: string; dsLang?: string }
-) => buildEmbedUrl('tv', tmdbId, { ...options, season, episode });
+) => {
+  // Using the recommended format from the documentation
+  return `${API_BASE_URL}/embed/tv/${tmdbId}/${season}-${episode}`;
+};
 
 // Aliases for TMDb IDs
 export const getMovieEmbedUrlByTmdb = getMovieEmbedUrl;
