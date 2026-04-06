@@ -36,3 +36,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local mongo
+/data/
+/dump/
+/logs/
+config.bat

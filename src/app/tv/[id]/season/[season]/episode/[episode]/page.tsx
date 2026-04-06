@@ -3,9 +3,10 @@
 import { useParams, useRouter } from 'next/navigation';
 import { getPosterUrl, getBackdropUrl } from '@/api/tmdb';
 import { useTVShowDetails, useTVSeasonDetails, useTVEpisodeDetails } from '@/hooks/useTMDB';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { VideoPlayer, buildEpisodeSources } from '@/components/player/VideoPlayer';
 
 export default function EpisodePage() {
   const params = useParams();
@@ -20,21 +21,9 @@ export default function EpisodePage() {
   
   const [seasonDropdownOpen, setSeasonDropdownOpen] = useState(false);
   const [episodeDropdownOpen, setEpisodeDropdownOpen] = useState(false);
-  const [currentSourceIndex, setCurrentSourceIndex] = useState(0);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  
-  // Create multiple embed URL formats to try in case one fails
-  // These are the different formats supported by VidSrc as per their documentation
-  const embedSources = [
-    // Format 1: Path-based URL (recommended in docs)
-    `https://vidsrc.xyz/embed/tv/${showId}/${seasonNumber}-${episodeNumber}`,
-    // Format 2: Query parameter-based URL
-    `https://vidsrc.xyz/embed/tv?tmdb=${showId}&season=${seasonNumber}&episode=${episodeNumber}`,
-    // Format 3: Alternative domain
-    `https://vidsrc.to/embed/tv/${showId}/${seasonNumber}-${episodeNumber}`,
-    // Format 4: Another alternative domain
-    `https://vidsrc.me/embed/tv/${showId}/${seasonNumber}-${episodeNumber}`
-  ];
+  const [autoplayCountdown, setAutoplayCountdown] = useState<number | null>(null);
+  const autoplayTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoplayStartRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // When the episode page loads, check if the episode is available and update in DB via API
@@ -51,7 +40,7 @@ export default function EpisodePage() {
               episodeNumber: episodeNumber
             })
           });
-          
+
           if (!response.ok) {
             throw new Error('Failed to update episode availability');
           }
@@ -59,10 +48,24 @@ export default function EpisodePage() {
           console.error('Failed to update episode availability:', error);
         }
       };
-      
+
       updateAvailability();
     }
   }, [showId, seasonNumber, episodeNumber, show, showLoading]);
+
+  // Log view to watch history (fire-and-forget; 401 for guests is fine)
+  useEffect(() => {
+    fetch('/api/history/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdbId: parseInt(showId, 10),
+        type: 'tvshow',
+        seasonNumber,
+        episodeNumber,
+      }),
+    }).catch(() => {});
+  }, [showId, seasonNumber, episodeNumber]);
 
   // Calculate accurate number of episodes per season
   const getMaxEpisodes = () => {
@@ -137,23 +140,43 @@ export default function EpisodePage() {
     }
   };
 
-  // Function to try the next source
-  const tryNextSource = () => {
-    if (currentSourceIndex < embedSources.length - 1) {
-      setCurrentSourceIndex(currentSourceIndex + 1);
-    } else {
-      // If we've tried all sources, go back to the first one
-      setCurrentSourceIndex(0);
-    }
-  };
+  // ── Autoplay next episode ──────────────────────────────────────────────
+  const hasNextEpisode = useCallback(() => {
+    const maxEp = getMaxEpisodes();
+    return episodeNumber < maxEp || seasonNumber < getSeasonCount();
+  }, [episodeNumber, seasonNumber, show, season]);
 
-  // Reset source index when episode or season changes
   useEffect(() => {
-    setCurrentSourceIndex(0);
-  }, [showId, seasonNumber, episodeNumber]);
+    // After 25 minutes on the page, start a 15-second countdown to next episode
+    setAutoplayCountdown(null);
+    if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current);
+    if (autoplayStartRef.current) clearTimeout(autoplayStartRef.current);
 
-  // Current embed URL
-  const currentEmbedUrl = embedSources[currentSourceIndex];
+    autoplayStartRef.current = setTimeout(() => {
+      if (!hasNextEpisode()) return;
+      setAutoplayCountdown(15);
+      autoplayTimerRef.current = setInterval(() => {
+        setAutoplayCountdown((prev) => {
+          if (prev === null || prev <= 1) {
+            if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current);
+            handleNextEpisode();
+            return null;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }, 25 * 60 * 1000); // 25 minutes
+
+    return () => {
+      if (autoplayStartRef.current) clearTimeout(autoplayStartRef.current);
+      if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current);
+    };
+  }, [showId, seasonNumber, episodeNumber, hasNextEpisode]);
+
+  const cancelAutoplay = () => {
+    setAutoplayCountdown(null);
+    if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current);
+  };
 
   // Get the episode title
   const getEpisodeTitle = () => {
@@ -179,50 +202,36 @@ export default function EpisodePage() {
   return (
     <div className="container mx-auto py-4 px-4">
       {/* Video Player with source selector */}
-      <div className="mb-6">
-        <div className="aspect-video w-full rounded-lg overflow-hidden bg-black relative">
-          <iframe
-            ref={iframeRef}
-            src={currentEmbedUrl}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            className="w-full h-full"
-            title={`${show?.name} - S${seasonNumber}E${episodeNumber}`}
-          />
-        </div>
-        
-        {/* Source selector controls */}
-        <div className="mt-3 flex justify-between items-center">
-          <div className="flex items-center">
-            <span className="text-sm text-gray-400 mr-2">Source:</span>
-            <div className="flex gap-2">
-              {embedSources.map((_, idx) => (
+      <div className="mb-6 relative">
+        <VideoPlayer
+          sources={buildEpisodeSources(showId, seasonNumber, episodeNumber)}
+          title={`${show?.name} - S${seasonNumber}E${episodeNumber}`}
+          storageKey={`tv:${showId}`}
+        />
+
+        {/* Autoplay next episode overlay */}
+        {autoplayCountdown !== null && (
+          <div className="absolute inset-0 bg-black/80 flex items-center justify-center rounded-lg z-10">
+            <div className="text-center">
+              <p className="text-lg mb-2">Next episode in</p>
+              <p className="text-5xl font-bold mb-4">{autoplayCountdown}</p>
+              <div className="flex gap-3 justify-center">
                 <button
-                  key={idx}
-                  onClick={() => setCurrentSourceIndex(idx)}
-                  className={`w-8 h-8 flex items-center justify-center rounded-full ${
-                    currentSourceIndex === idx
-                      ? 'bg-primary text-white'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-                  aria-label={`Source ${idx + 1}`}
+                  onClick={handleNextEpisode}
+                  className="px-6 py-2 bg-white text-black font-medium rounded hover:bg-white/90 transition-colors"
                 >
-                  {idx + 1}
+                  Play Now
                 </button>
-              ))}
+                <button
+                  onClick={cancelAutoplay}
+                  className="px-6 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
-          
-          <button
-            onClick={tryNextSource}
-            className="text-sm px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded-md flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Try Another Source
-          </button>
-        </div>
+        )}
       </div>
       
       {/* Episode title and navigation */}

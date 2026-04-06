@@ -44,21 +44,32 @@ export async function connectToDatabase() {
     db = client.db();
     contentCollection = db.collection('content') as Collection<ContentDocument>;
     
+    // Drop legacy single-field tmdbId index (replaced by the unique
+    // (tmdbId, type) compound below — tmdbId alone isn't unique because TMDB's
+    // movie and tv id-spaces overlap).
+    if (contentCollection) {
+      try {
+        await contentCollection.dropIndex('tmdbId_1');
+      } catch (_e) {
+        // ignore: index may not exist on fresh DBs
+      }
+    }
+
     // Create indexes for faster queries
-    const indexes: IndexSpecification[] = [
-      { tmdbId: 1 } as IndexSpecification,
-      { type: 1, available: 1 } as IndexSpecification,
-      { 'data.title': 1 } as IndexSpecification,
-      { 'data.name': 1 } as IndexSpecification,
-      { lastChecked: 1 } as IndexSpecification,
-      { 'seasons.seasonNumber': 1 } as IndexSpecification,
-      { 'seasons.episodes.episodeNumber': 1 } as IndexSpecification
+    const indexes: Array<{ key: IndexSpecification; options?: any }> = [
+      { key: { tmdbId: 1, type: 1 }, options: { unique: true, name: 'tmdbId_1_type_1' } },
+      { key: { type: 1, available: 1 } },
+      { key: { 'data.title': 1 } },
+      { key: { 'data.name': 1 } },
+      { key: { lastChecked: 1 } },
+      { key: { 'seasons.seasonNumber': 1 } },
+      { key: { 'seasons.episodes.episodeNumber': 1 } }
     ];
-    
-    for (const index of indexes) {
+
+    for (const { key, options } of indexes) {
       try {
         if (contentCollection) {
-          await contentCollection.createIndex(index);
+          await contentCollection.createIndex(key, options);
         }
       } catch (error) {
         console.log(`Index already exists or error creating index:`, error);
@@ -91,8 +102,11 @@ export async function updateTVShowSeasonData(tvId: number, seasons: Season[]) {
     
     if (contentCollection) {
       await contentCollection.updateOne(
-        { tmdbId: tvId },
-        { $set: { seasons: seasonsData } },
+        { tmdbId: tvId, type: 'tvshow' },
+        {
+          $set: { seasons: seasonsData },
+          $setOnInsert: { tmdbId: tvId, type: 'tvshow' }
+        },
         { upsert: true }
       );
     }
@@ -125,11 +139,14 @@ export async function bulkUpdateTVShowSeasonData(data: Array<{tvId: number, seas
       
       return {
         updateOne: {
-          filter: { tmdbId: item.tvId },
-          update: { $set: { 
-            seasons: seasonsData,
-            lastChecked: now
-          }},
+          filter: { tmdbId: item.tvId, type: 'tvshow' as const },
+          update: {
+            $set: {
+              seasons: seasonsData,
+              lastChecked: now
+            },
+            $setOnInsert: { tmdbId: item.tvId, type: 'tvshow' as const }
+          },
           upsert: true
         }
       };
@@ -161,9 +178,10 @@ export async function checkAndUpdateEpisodeAvailability(
   
   try {
     // Check if we already have this episode cached
-    const tvShow = contentCollection ? 
-      await contentCollection.findOne({ 
+    const tvShow = contentCollection ?
+      await contentCollection.findOne({
         tmdbId: tvId,
+        type: 'tvshow',
         'seasons.seasonNumber': seasonNumber
       }) : null;
     
@@ -180,7 +198,7 @@ export async function checkAndUpdateEpisodeAvailability(
     }
     
     // Check with VidSrc if episode is available
-    const episodeUrl = `https://vidsrc.xyz/embed/tv/${tvId}/${seasonNumber}-${episodeNumber}`;
+    const episodeUrl = `https://vsembed.ru/embed/tv/${tvId}/${seasonNumber}-${episodeNumber}`;
     const response = await fetch(episodeUrl);
     const isAvailable = response.ok;
     
@@ -188,29 +206,31 @@ export async function checkAndUpdateEpisodeAvailability(
     if (contentCollection) {
       // First ensure we have the TV show and season
       await contentCollection.updateOne(
-        { tmdbId: tvId },
-        { 
-          $setOnInsert: { 
+        { tmdbId: tvId, type: 'tvshow' },
+        {
+          $setOnInsert: {
+            tmdbId: tvId,
             type: 'tvshow',
             available: true,
-            lastChecked: now 
-          } 
+            lastChecked: now
+          }
         },
         { upsert: true }
       );
-      
+
       // Check if the season exists
       const seasonExists = await contentCollection.findOne({
         tmdbId: tvId,
+        type: 'tvshow',
         'seasons.seasonNumber': seasonNumber
       });
-      
+
       if (!seasonExists) {
         // Add the season if it doesn't exist
         await contentCollection.updateOne(
-          { tmdbId: tvId },
-          { 
-            $push: { 
+          { tmdbId: tvId, type: 'tvshow' },
+          {
+            $push: {
               seasons: {
                 seasonNumber,
                 episodeCount: 0,  // Will be updated later
@@ -221,11 +241,12 @@ export async function checkAndUpdateEpisodeAvailability(
           }
         );
       }
-      
+
       // Update or add the episode
       await contentCollection.updateOne(
-        { 
+        {
           tmdbId: tvId,
+          type: 'tvshow',
           'seasons.seasonNumber': seasonNumber
         },
         {
@@ -245,8 +266,9 @@ export async function checkAndUpdateEpisodeAvailability(
       
       // If the episode already exists, update it
       await contentCollection.updateOne(
-        { 
+        {
           tmdbId: tvId,
+          type: 'tvshow',
           'seasons.seasonNumber': seasonNumber,
           'seasons.episodes.episodeNumber': episodeNumber
         },
@@ -272,7 +294,36 @@ export async function checkAndUpdateEpisodeAvailability(
   }
 }
 
-export async function checkAndCacheAvailability(content: Movie | TVShow, type: 'movie' | 'tvshow') {
+// Probe a vidsrc URL with retries + backoff. Returns a definitive yes/no only
+// when vidsrc responds with a real 2xx or 4xx (non-rate-limit). 429/503/network
+// errors return { status: 'ratelimited' } so the caller can preserve state.
+type VidsrcResult = { status: 'ok'; available: boolean } | { status: 'ratelimited' };
+async function checkVidsrc(url: string, maxAttempts = 4): Promise<VidsrcResult> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, { redirect: 'follow' });
+      if (res.status === 429 || res.status === 503) {
+        if (attempt < maxAttempts) {
+          await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+          continue;
+        }
+        return { status: 'ratelimited' };
+      }
+      // 2xx = available; 4xx (non-429) = not available
+      return { status: 'ok', available: res.ok };
+    } catch (_e) {
+      // network error — retry
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+        continue;
+      }
+      return { status: 'ratelimited' };
+    }
+  }
+  return { status: 'ratelimited' };
+}
+
+export async function checkAndCacheAvailability(content: Movie | TVShow, type: 'movie' | 'tvshow'): Promise<boolean> {
   if (!contentCollection) {
     await connectToDatabase();
   }
@@ -281,20 +332,25 @@ export async function checkAndCacheAvailability(content: Movie | TVShow, type: '
   const now = new Date();
   
   try {
-    // Check if we already have this content cached
-    const existing = contentCollection ? await contentCollection.findOne({ tmdbId }) : null;
-    
-    if (existing && (now.getTime() - existing.lastChecked.getTime() < 24 * 60 * 60 * 1000)) {
-      return existing.available;
+    // Check if we already have this content cached (scoped by type — TMDB movie
+    // and tv id-spaces overlap, so filtering by tmdbId alone can hit the wrong doc)
+    const existing = contentCollection ? await contentCollection.findOne({ tmdbId, type }) : null;
+
+    if (existing) {
+      const ageMs = now.getTime() - existing.lastChecked.getTime();
+      const ttl = existing.available ? CACHE_FRESH_AVAILABLE_MS : CACHE_FRESH_UNAVAILABLE_MS;
+      if (ageMs < ttl) return existing.available;
     }
 
-    // Check availability with Vidsrc
-    const streamUrl = type === 'movie' 
-      ? `https://vidsrc.xyz/embed/movie/${tmdbId}`
-      : `https://vidsrc.xyz/embed/tv/${tmdbId}/1/1`;
-    
-    const response = await fetch(streamUrl);
-    const isAvailable = response.ok;
+    // Check availability with Vidsrc (with retries on 429/503/network errors).
+    // If all retries fail, we treat the result as "unknown" and preserve the
+    // existing availability flag — we must NOT flip an available title to
+    // unavailable just because vidsrc rate-limited us.
+    const streamUrl = type === 'movie'
+      ? `https://vsembed.ru/embed/movie/${tmdbId}`
+      : `https://vsembed.ru/embed/tv/${tmdbId}/1/1`;
+
+    const checkResult = await checkVidsrc(streamUrl);
 
     // Update or insert the content
     if (contentCollection) {
@@ -305,23 +361,49 @@ export async function checkAndCacheAvailability(content: Movie | TVShow, type: '
           await updateTVShowSeasonData(tmdbId, tvShow.seasons);
         }
       }
-      
-      await contentCollection.updateOne(
-        { tmdbId },
-        {
-          $set: {
-            tmdbId,
-            type,
-            data: content,
-            available: isAvailable,
-            lastChecked: now
-          }
-        },
-        { upsert: true }
-      );
+
+      if (checkResult.status === 'ok') {
+        // Got a definitive yes/no from vidsrc — write all fields.
+        await contentCollection.updateOne(
+          { tmdbId, type },
+          {
+            $set: {
+              tmdbId,
+              type,
+              data: content,
+              available: checkResult.available,
+              lastChecked: now
+            }
+          },
+          { upsert: true }
+        );
+        return checkResult.available;
+      } else {
+        // Rate-limited / network failure after retries. Refresh TMDB metadata
+        // but DO NOT touch `available` or `lastChecked` — the next run will retry.
+        // For new items, insert optimistically as available=true so they show up;
+        // a future run with a clean vidsrc response will correct if wrong.
+        if (existing) {
+          await contentCollection.updateOne(
+            { tmdbId, type },
+            { $set: { data: content } }
+          );
+          return existing.available;
+        } else {
+          // Optimistic insert with lastChecked epoch-0 so next run re-verifies immediately.
+          await contentCollection.updateOne(
+            { tmdbId, type },
+            {
+              $set: { tmdbId, type, data: content, available: true, lastChecked: new Date(0) }
+            },
+            { upsert: true }
+          );
+          return true;
+        }
+      }
     }
 
-    return isAvailable;
+    return checkResult.status === 'ok' ? checkResult.available : false;
   } catch (error) {
     console.error(`Error checking availability for ${type} ${tmdbId}:`, error);
     return false;
@@ -408,115 +490,184 @@ export async function updatePopularContent() {
   }
 }
 
+// TMDB discover has a hard 500-page cap per endpoint (20 items/page = 10k items max).
+// Honored via Math.min(total_pages, TMDB_MAX_PAGES).
+const TMDB_MAX_PAGES = 500;
+
+// vidsrc rate-limits by IP. Keep concurrency low and delays generous so the
+// sync script never burns through the same IP's quota that the user's browser
+// needs to load iframes. Script can run overnight — throughput isn't the goal.
+const VIDSRC_CONCURRENCY = 1;
+const VIDSRC_BATCH_DELAY_MS = 500;
+// Split cache freshness: once vidsrc confirms a title is available, it stays
+// available for a long time, so don't re-verify for 30 days. "Not available"
+// items get re-checked sooner since new titles come online frequently.
+const CACHE_FRESH_AVAILABLE_MS = 30 * 24 * 60 * 60 * 1000;
+const CACHE_FRESH_UNAVAILABLE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Override range via env, e.g. FETCH_START_PAGE=1 FETCH_END_PAGE=3 for a smoke test.
+function getPageRange(): { start: number; end: number } {
+  const start = Math.max(1, parseInt(process.env.FETCH_START_PAGE || '1', 10));
+  const envEnd = parseInt(process.env.FETCH_END_PAGE || '', 10);
+  const end = Number.isFinite(envEnd) && envEnd > 0 ? envEnd : TMDB_MAX_PAGES;
+  return { start, end };
+}
+
+type DiscoverPage = { results: any[]; total_pages: number; page: number } | null;
+
+async function fetchTMDBDiscover(
+  endpoint: 'movie' | 'tv',
+  page: number,
+  attempt = 1
+): Promise<DiscoverPage> {
+  const apiKey = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+  const url = `https://api.themoviedb.org/3/discover/${endpoint}?api_key=${apiKey}&page=${page}&sort_by=popularity.desc`;
+  try {
+    const res = await fetch(url);
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt < 4) {
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+        return fetchTMDBDiscover(endpoint, page, attempt + 1);
+      }
+      return null;
+    }
+    const data = await res.json();
+    if (!data || !Array.isArray(data.results)) return null;
+    return { results: data.results, total_pages: data.total_pages || 0, page };
+  } catch (_e) {
+    if (attempt < 4) {
+      await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+      return fetchTMDBDiscover(endpoint, page, attempt + 1);
+    }
+    return null;
+  }
+}
+
+// Run `fn` over `items` with at most `concurrency` in flight at any time.
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export async function fetchAndCacheAllContent() {
   if (!contentCollection) {
     await connectToDatabase();
   }
 
-  try {
-    console.log('Starting to fetch all available content...');
-    let page = 1;
-    let hasMore = true;
-    const batchSize = 20;
-    const maxConcurrent = 5;
-    const preloadPages = 3; // Number of pages to preload
-    let processedCount = 0;
-    let preloadedData: Array<{ movies: Movie[]; tvShows: TVShow[] }> = [];
+  const { start, end } = getPageRange();
+  const stats = {
+    movie: { processed: 0, available: 0, skipped: 0, pages: 0 },
+    tvshow: { processed: 0, available: 0, skipped: 0, pages: 0 }
+  };
+  const runStart = Date.now();
 
-    // Function to preload pages
-    async function preloadNextPages(currentPage: number): Promise<Array<{ movies: Movie[]; tvShows: TVShow[] }>> {
-      const preloadPromises = [];
-      for (let i = 1; i <= preloadPages; i++) {
-        const nextPage = currentPage + i;
-        preloadPromises.push(
-          Promise.all([
-            fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&page=${nextPage}`)
-              .then(res => res.json())
-              .then(data => data.results as Movie[]),
-            fetch(`https://api.themoviedb.org/3/discover/tv?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&page=${nextPage}`)
-              .then(res => res.json())
-              .then(data => data.results as TVShow[])
-          ]).then(([movies, tvShows]) => ({ movies, tvShows }))
+  async function crawlEndpoint(endpoint: 'movie' | 'tv') {
+    const docType: 'movie' | 'tvshow' = endpoint === 'movie' ? 'movie' : 'tvshow';
+    const label = endpoint === 'movie' ? 'MOVIES' : 'TV SHOWS';
+    console.log(`\n=== ${label}: crawling TMDB discover/${endpoint} ===`);
+
+    // Fetch page 1 (unless starting later) to discover total_pages.
+    const probe = await fetchTMDBDiscover(endpoint, start);
+    if (!probe) {
+      console.error(`[${endpoint}] could not fetch page ${start} from TMDB, aborting this endpoint`);
+      return;
+    }
+    const cappedTotal = Math.min(probe.total_pages, TMDB_MAX_PAGES, end);
+    console.log(`[${endpoint}] TMDB reports ${probe.total_pages} pages; crawling pages ${start}..${cappedTotal}`);
+
+    // Small look-ahead buffer of ONE page, fetched while current page processes.
+    let nextPagePromise: Promise<DiscoverPage> | null = null;
+    let currentResults = probe.results;
+
+    for (let page = start; page <= cappedTotal; page++) {
+      if (page > start) {
+        const next = await nextPagePromise;
+        if (!next || next.results.length === 0) {
+          console.log(`[${endpoint}] page ${page} empty or failed, stopping crawl`);
+          break;
+        }
+        currentResults = next.results;
+      }
+
+      // Kick off next page fetch concurrently with item processing.
+      if (page + 1 <= cappedTotal) {
+        nextPagePromise = fetchTMDBDiscover(endpoint, page + 1);
+      } else {
+        nextPagePromise = null;
+      }
+
+      // Bulk-prefetch existing docs for this page so we can fast-path items
+      // that are already cached fresh — no vidsrc round-trip, no sleep.
+      const pageIds = currentResults.map((r: any) => r.id);
+      const existingDocs = contentCollection
+        ? await contentCollection.find({ tmdbId: { $in: pageIds }, type: docType }).toArray()
+        : [];
+      const existingMap = new Map(existingDocs.map(d => [d.tmdbId, d]));
+      const now = Date.now();
+
+      const itemLabel = docType === 'movie' ? 'Movie' : 'TV Show';
+      const toCheck: any[] = [];
+
+      for (const item of currentResults) {
+        const cached = existingMap.get(item.id);
+        const ttl = cached?.available ? CACHE_FRESH_AVAILABLE_MS : CACHE_FRESH_UNAVAILABLE_MS;
+        if (cached && cached.lastChecked && (now - cached.lastChecked.getTime()) < ttl) {
+          // Fast path — within TTL (30d if available, 7d if unavailable).
+          stats[docType].processed++;
+          stats[docType].skipped++;
+          if (cached.available) stats[docType].available++;
+          const n = stats[docType].processed;
+          const title = item.title || item.name || `id=${item.id}`;
+          console.log(`[${n}] ${itemLabel}: ${title} - ${cached.available ? 'Available' : 'Not Available'} (cached)`);
+        } else {
+          toCheck.push(item);
+        }
+      }
+
+      // Slow path — only items that are new or stale hit vidsrc.
+      await runWithConcurrency(toCheck, VIDSRC_CONCURRENCY, async (item) => {
+        const isAvailable = await checkAndCacheAvailability(item, docType);
+        stats[docType].processed++;
+        if (isAvailable) stats[docType].available++;
+        const n = stats[docType].processed;
+        const title = item.title || item.name || `id=${item.id}`;
+        console.log(`[${n}] ${itemLabel}: ${title} - ${isAvailable ? 'Available' : 'Not Available'}`);
+        // Tiny per-item pacing to be polite to vidsrc.
+        await new Promise(r => setTimeout(r, VIDSRC_BATCH_DELAY_MS / VIDSRC_CONCURRENCY));
+      });
+
+      stats[docType].pages++;
+      if (page % 5 === 0 || page === cappedTotal) {
+        const elapsed = ((Date.now() - runStart) / 1000).toFixed(0);
+        console.log(
+          `[${endpoint}] page ${page}/${cappedTotal} — ` +
+          `processed: ${stats[docType].processed}, available: ${stats[docType].available} ` +
+          `(${elapsed}s elapsed)`
         );
       }
-      return Promise.all(preloadPromises);
     }
+  }
 
-    // Initial preload
-    preloadedData = await preloadNextPages(0);
+  try {
+    await crawlEndpoint('movie');
+    await crawlEndpoint('tv');
 
-    while (hasMore) {
-      // Get current page data from preloaded data or fetch if not available
-      let currentPageData: { movies: Movie[]; tvShows: TVShow[] };
-
-      if (preloadedData.length > 0) {
-        currentPageData = preloadedData.shift()!;
-        // Start preloading next pages in the background
-        if (hasMore) {
-          preloadNextPages(page + preloadPages - 1)
-            .then(newData => {
-              preloadedData.push(...newData);
-            })
-            .catch(error => {
-              console.error('Error preloading pages:', error);
-            });
-        }
-      } else {
-        // Fallback to direct fetch if preloading failed
-        const [moviesResponse, tvResponse] = await Promise.all([
-          fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&page=${page}`),
-          fetch(`https://api.themoviedb.org/3/discover/tv?api_key=${process.env.NEXT_PUBLIC_TMDB_API_KEY}&page=${page}`)
-        ]);
-        
-        const moviesData = await moviesResponse.json();
-        const tvData = await tvResponse.json();
-        
-        currentPageData = {
-          movies: moviesData.results as Movie[],
-          tvShows: tvData.results as TVShow[]
-        };
-      }
-
-      if (currentPageData.movies.length === 0 && currentPageData.tvShows.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      // Process movies in parallel with controlled concurrency
-      const moviePromises = currentPageData.movies.map(async (movie: Movie) => {
-        const isAvailable = await checkAndCacheAvailability(movie, 'movie');
-        processedCount++;
-        console.log(`[${processedCount}] Movie: ${movie.title} - ${isAvailable ? 'Available' : 'Not Available'}`);
-        return isAvailable;
-      });
-
-      // Process in batches to control concurrency
-      for (let i = 0; i < moviePromises.length; i += maxConcurrent) {
-        const batch = moviePromises.slice(i, i + maxConcurrent);
-        await Promise.all(batch);
-      }
-
-      // Process TV shows in parallel with controlled concurrency
-      const tvPromises = currentPageData.tvShows.map(async (show: TVShow) => {
-        const isAvailable = await checkAndCacheAvailability(show, 'tvshow');
-        processedCount++;
-        console.log(`[${processedCount}] TV Show: ${show.name} - ${isAvailable ? 'Available' : 'Not Available'}`);
-        return isAvailable;
-      });
-
-      // Process in batches to control concurrency
-      for (let i = 0; i < tvPromises.length; i += maxConcurrent) {
-        const batch = tvPromises.slice(i, i + maxConcurrent);
-        await Promise.all(batch);
-      }
-
-      console.log(`\nCompleted page ${page} - Processed ${processedCount} items so far`);
-      console.log(`Preloaded pages: ${preloadedData.length}\n`);
-      page++;
-    }
-
-    console.log('\nAll content has been fetched and cached successfully!');
-    console.log(`Total items processed: ${processedCount}`);
+    const elapsed = ((Date.now() - runStart) / 1000).toFixed(0);
+    console.log('\n=== Sync complete ===');
+    console.log(`Elapsed: ${elapsed}s`);
+    console.log(`Movies:  ${stats.movie.processed} processed across ${stats.movie.pages} pages, ${stats.movie.available} available, ${stats.movie.skipped} cached`);
+    console.log(`TV:      ${stats.tvshow.processed} processed across ${stats.tvshow.pages} pages, ${stats.tvshow.available} available, ${stats.tvshow.skipped} cached`);
   } catch (error) {
     console.error('Error fetching all content:', error);
     throw error;
@@ -530,18 +681,21 @@ export async function getContentByCategory(type: 'movie' | 'tvshow', category: s
 
   try {
     const skip = (page - 1) * limit;
-    
+
+    // TMDB uses different date fields for movies vs. TV (release_date vs. first_air_date).
+    const dateField = type === 'movie' ? 'data.release_date' : 'data.first_air_date';
+
     // Build the query based on category
     let query: any = { type, available: true };
-    
+
     switch (category) {
       case 'popular':
         // Sort by TMDB popularity score
         query = { ...query, 'data.popularity': { $exists: true } };
         break;
       case 'latest':
-        // Sort by release date
-        query = { ...query, 'data.release_date': { $exists: true } };
+        // Sort by release / first-air date
+        query = { ...query, [dateField]: { $exists: true, $ne: '' } };
         break;
       case 'top_rated':
         // Sort by vote average
@@ -564,7 +718,7 @@ export async function getContentByCategory(type: 'movie' | 'tvshow', category: s
         sort = { 'data.popularity': -1 };
         break;
       case 'latest':
-        sort = { 'data.release_date': -1 };
+        sort = { [dateField]: -1 };
         break;
       case 'top_rated':
         sort = { 'data.vote_average': -1 };

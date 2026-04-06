@@ -3,9 +3,11 @@
 import { usePopularMovies, usePopularTVShows } from "@/hooks/useTMDB";
 import { Card } from "@/components/ui/Card";
 import { getPosterUrl, getBackdropUrl } from "@/api/tmdb";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { Movie, TVShow } from "@/types/tmdb";
 import Link from "next/link";
+import { TrendingNowRow } from "@/components/home/TrendingNowRow";
+import { NewOnFreeFlixRow } from "@/components/home/NewOnFreeFlixRow";
 
 export default function HomePage() {
   const [moviesPage, setMoviesPage] = useState(1);
@@ -21,15 +23,13 @@ export default function HomePage() {
 
   const movies = moviesData?.content || [];
   const tvShows = tvData?.content || [];
-  const moviesTotalPages = moviesData?.totalPages || 0;
-  const tvTotalPages = tvData?.totalPages || 0;
 
   return (
     <div className="w-full">
       {/* Hero Section */}
       {movies.length > 0 && (
         <section className="relative w-full h-[85vh]">
-          <div 
+          <div
             className="absolute inset-0 bg-cover bg-center"
             style={{
               backgroundImage: `url(${getBackdropUrl(movies[0].backdrop_path)})`
@@ -43,7 +43,7 @@ export default function HomePage() {
               <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold mb-4">{movies[0].title}</h1>
               <p className="text-xl text-white/80 mb-8 line-clamp-3 md:line-clamp-none max-w-lg">{movies[0].overview}</p>
               <div className="flex flex-wrap gap-4">
-                <Link 
+                <Link
                   href={`/movie/${movies[0].id}`}
                   className="inline-flex items-center justify-center px-8 py-3 bg-white text-black font-medium rounded gap-2 hover:bg-white/90 transition-colors"
                 >
@@ -52,7 +52,7 @@ export default function HomePage() {
                   </svg>
                   Play
                 </Link>
-                <button 
+                <button
                   className="inline-flex items-center justify-center px-8 py-3 bg-gray-600/80 text-white font-medium rounded gap-2 hover:bg-gray-600 transition-colors"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -70,6 +70,12 @@ export default function HomePage() {
 
       <div className="bg-gradient-to-b from-black/40 to-black relative z-10">
         <div className="container mx-auto px-4 py-8">
+          {/* Trending Now — real data from all users' watch history */}
+          <TrendingNowRow />
+
+          {/* New on FreeFlix — latest movies + TV interleaved */}
+          <NewOnFreeFlixRow />
+
           {/* Popular Movies Section */}
           <section className="mb-16">
             <div className="flex justify-between items-center mb-6">
@@ -78,7 +84,7 @@ export default function HomePage() {
                 View All
               </Link>
             </div>
-            
+
             {isLoadingMovies ? (
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {Array.from({ length: 6 }).map((_, index) => (
@@ -113,7 +119,7 @@ export default function HomePage() {
                 View All
               </Link>
             </div>
-            
+
             {isLoadingTV ? (
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {Array.from({ length: 6 }).map((_, index) => (
