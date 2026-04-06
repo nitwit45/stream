@@ -1,0 +1,13 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: freeflix-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: changeme_local
+      MONGO_INITDB_DATABASE: freeflix
+    volumes:
+      - ./data/mongo:/data/db

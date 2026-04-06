@@ -3,6 +3,9 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
 import { SearchBar } from "@/components/SearchBar";
+import { UserMenu } from "@/components/auth/UserMenu";
+import { NotificationBell } from "@/components/header/NotificationBell";
+import { ForYouNavLink } from "@/components/layout/ForYouNavLink";
 import { Providers } from "./providers";
 
 const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
@@ -52,9 +55,12 @@ export default function RootLayout({
                   >
                     Latest
                   </Link>
+                  <ForYouNavLink />
                 </div>
                 <div className="flex items-center gap-4">
                   <SearchBar />
+                  <NotificationBell />
+                  <UserMenu />
                   <button className="md:hidden text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="3" y1="12" x2="21" y2="12"></line>

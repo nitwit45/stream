@@ -5,15 +5,31 @@ import { Movie, TVShow } from "@/types/tmdb";
 import { getPosterUrl } from "@/api/tmdb";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 
 export function SearchBar() {
   const router = useRouter();
+  const { status } = useSession();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { data: historyData } = useQuery({
+    queryKey: ['search-history'],
+    queryFn: async () => {
+      const res = await fetch('/api/search-history');
+      if (!res.ok) return { history: [] };
+      return res.json();
+    },
+    enabled: status === 'authenticated',
+    staleTime: 60_000,
+  });
+  const searchHistory: string[] = historyData?.history ?? [];
 
   const { data: moviesData, isLoading: isLoadingMovies } = useSearchMovies(query, 1, {
     enabled: query.length > 0,
@@ -43,6 +59,16 @@ export function SearchBar() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
+      // Save to search history (fire-and-forget)
+      if (status === 'authenticated') {
+        fetch('/api/search-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query.trim() }),
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['search-history'] });
+        }).catch(() => {});
+      }
       router.push(`/search?q=${encodeURIComponent(query.trim())}`);
       setIsOpen(false);
     }
@@ -89,6 +115,41 @@ export function SearchBar() {
           />
         </form>
       </div>
+
+      {/* Search history dropdown (empty query, focused) */}
+      {isOpen && query.length === 0 && searchHistory.length > 0 && (
+        <div className="absolute top-full right-0 w-64 md:w-80 mt-2 bg-black/95 rounded border border-gray-800 shadow-xl z-50">
+          <div className="p-2 flex justify-between items-center border-b border-gray-800">
+            <span className="text-xs text-gray-400 px-2">Recent searches</span>
+            <button
+              onClick={() => {
+                fetch('/api/search-history', { method: 'DELETE' }).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ['search-history'] });
+                }).catch(() => {});
+              }}
+              className="text-xs text-gray-500 hover:text-white px-2"
+            >
+              Clear
+            </button>
+          </div>
+          {searchHistory.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                setQuery(q);
+                router.push(`/search?q=${encodeURIComponent(q)}`);
+                setIsOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-white/10 flex items-center gap-2"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500 flex-shrink-0">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+              </svg>
+              <span className="truncate">{q}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {isOpen && query.length > 0 && (
         <div className="absolute top-full right-0 w-64 md:w-80 mt-2 bg-black/95 rounded border border-gray-800 shadow-xl max-h-[70vh] overflow-y-auto z-50">

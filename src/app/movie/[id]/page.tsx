@@ -1,22 +1,16 @@
 'use client';
 
 import { useMovieDetails } from "@/hooks/useTMDB";
-import { getMovieEmbedUrl } from "@/api/vidsrc";
 import { getPosterUrl, getBackdropUrl } from "@/api/tmdb";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { VideoPlayer, buildMovieSources } from "@/components/player/VideoPlayer";
+import { MyListButton } from "@/components/ui/MyListButton";
+import { ThumbsButtons } from "@/components/ui/ThumbsButtons";
 
 export default function MoviePage({ params }: { params: { id: string } }) {
   const { id } = params;
   const { data: movie, isLoading } = useMovieDetails(parseInt(id));
-  const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-
-  useEffect(() => {
-    if (movie) {
-      const url = getMovieEmbedUrl(movie.id.toString());
-      setEmbedUrl(url);
-    }
-  }, [movie]);
 
   if (isLoading) {
     return (
@@ -46,17 +40,25 @@ export default function MoviePage({ params }: { params: { id: string } }) {
   const handlePlayClick = () => {
     setIsPlaying(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Log view to watch history (fire-and-forget; 401 for guests is fine)
+    if (movie) {
+      fetch('/api/history/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tmdbId: movie.id, type: 'movie' }),
+      }).catch(() => {});
+    }
   };
 
   return (
     <div className="w-full">
-      {isPlaying && embedUrl ? (
-        <div className="w-full bg-black pt-[56.25%] relative">
-          <iframe
-            src={embedUrl}
-            className="absolute top-0 left-0 w-full h-full"
-            allowFullScreen
-          ></iframe>
+      {isPlaying ? (
+        <div className="container mx-auto px-4 pt-4">
+          <VideoPlayer
+            sources={buildMovieSources(movie.id)}
+            title={movie.title}
+            storageKey={`movie:${movie.id}`}
+          />
         </div>
       ) : (
         <div className="relative w-full h-[70vh]">
@@ -82,8 +84,8 @@ export default function MoviePage({ params }: { params: { id: string } }) {
               
               <p className="text-lg text-white/90 mb-8 max-w-2xl line-clamp-3 md:line-clamp-none">{movie.overview}</p>
               
-              <div className="flex flex-wrap gap-4">
-                <button 
+              <div className="flex flex-wrap items-center gap-4">
+                <button
                   onClick={handlePlayClick}
                   className="inline-flex items-center justify-center px-8 py-3 bg-white text-black font-medium rounded gap-2 hover:bg-white/90 transition-colors"
                 >
@@ -92,15 +94,8 @@ export default function MoviePage({ params }: { params: { id: string } }) {
                   </svg>
                   Play
                 </button>
-                
-                <button 
-                  className="inline-flex items-center justify-center px-8 py-3 bg-gray-600/80 text-white font-medium rounded gap-2 hover:bg-gray-600 transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"></path>
-                  </svg>
-                  My List
-                </button>
+                <MyListButton tmdbId={movie.id} type="movie" />
+                <ThumbsButtons tmdbId={movie.id} type="movie" />
               </div>
             </div>
           </div>

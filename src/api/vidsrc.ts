@@ -35,8 +35,10 @@ interface ListResponse<T> {
   pages: number;
 }
 
-// Base API URL
+// Base API URL — used for both JSON feeds and embed links.
+// Embed domains migrated to vsembed.ru per vidsrc announcement.
 const API_BASE_URL = 'https://vidsrc.xyz';
+const EMBED_BASE_URL = 'https://vsembed.ru';
 
 // Helper function for making API requests
 const makeRequest = async <T>(endpoint: string): Promise<ListResponse<T>> => {
@@ -65,21 +67,21 @@ const buildEmbedUrl = (
   tmdbId: string,
   options?: { season?: number; episode?: number; subUrl?: string; dsLang?: string }
 ) => {
-  // For TV episodes, use the format recommended in the documentation: vidsrc.xyz/embed/tv/tmdbId/season-episode
+  // For TV episodes, use the format recommended in the documentation: vsembed.ru/embed/tv/tmdbId/season-episode
   if (type === 'tv' && options?.season && options?.episode) {
-    return `${API_BASE_URL}/embed/tv/${tmdbId}/${options.season}-${options.episode}`;
+    return `${EMBED_BASE_URL}/embed/tv/${tmdbId}/${options.season}-${options.episode}`;
   }
-  
+
   // For other cases, use the query parameter approach
   const params = new URLSearchParams();
   params.append('tmdb', tmdbId);
-  
+
   if (options?.season) params.append('season', options.season.toString());
   if (options?.episode) params.append('episode', options.episode.toString());
   if (options?.subUrl) params.append('sub_url', options.subUrl);
   if (options?.dsLang) params.append('ds_lang', options.dsLang);
-  
-  return `${API_BASE_URL}/embed/${type}?${params.toString()}`;
+
+  return `${EMBED_BASE_URL}/embed/${type}?${params.toString()}`;
 };
 
 // Embed URL generators
@@ -96,7 +98,7 @@ export const getEpisodeEmbedUrl = (
   options?: { subUrl?: string; dsLang?: string }
 ) => {
   // Using the recommended format from the documentation
-  return `${API_BASE_URL}/embed/tv/${tmdbId}/${season}-${episode}`;
+  return `${EMBED_BASE_URL}/embed/tv/${tmdbId}/${season}-${episode}`;
 };
 
 // Aliases for TMDb IDs
